@@ -1,0 +1,459 @@
+#include <stddef.h>
+#include "rbtree.h"
+ 
+/* inline methods */
+/* get the node with the minimum key in a subtree of the red-black tree */
+static inline rbtree_node_t*
+rbtree_subtree_min(rbtree_node_t* node, rbtree_node_t* sentinel)
+{
+    while(node->left != sentinel)
+    {
+        node = node->left;
+    }
+ 
+    return node;
+}
+ 
+/* replace the node "node" in the tree with node "tmp" */
+static inline void rbtree_replace(rbtree_t* tree,
+    rbtree_node_t* node, rbtree_node_t* tmp)
+{
+    /* upward: p[node] <- p[tmp] */
+    tmp->parent = node->parent;
+ 
+    if (node == tree->root)
+    {
+        tree->root = tmp;
+    }
+    else if (node == node->parent->left)
+    {
+        /* downward: left[p[node]] <- tmp */
+        node->parent->left = tmp;
+    }
+    else
+    {
+        /* downward: right[p[node]] <- tmp */
+        node->parent->right = tmp;
+    }
+ 
+    node->parent = tmp;
+}
+ 
+/* change the topologic structure of the tree keeping the order of the nodes */
+static inline void rbtree_left_rotate(rbtree_t* tree, rbtree_node_t* node)
+{
+    /* node as the var x in CLRS while tmp as the var y */
+    rbtree_node_t* tmp = node->right;
+ 
+    /* fix node_cnt */
+    node->node_cnt = node->left->node_cnt + tmp->left->node_cnt + 1;
+    tmp->node_cnt = node->node_cnt + tmp->right->node_cnt + 1;
+ 
+    /* replace y with left[y] */
+    /* downward: right[x] <- left[y] */
+    node->right = tmp->left;
+    /* if left[[y] is not NIL it has a parent */
+    if (tmp->left != tree->sentinel)
+    {
+        /* upward: p[left[y]] <- x */
+        tmp->left->parent = node;
+    }
+ 
+    /* replace x with y */
+    rbtree_replace(tree, node, tmp);
+    tmp->left = node;
+}
+ 
+static inline void rbtree_right_rotate(rbtree_t* tree, rbtree_node_t* node)
+{
+    rbtree_node_t* tmp = node->left;
+ 
+    /* fix node_cnt */
+    node->node_cnt = node->right->node_cnt + tmp->right->node_cnt + 1;
+    tmp->node_cnt = node->node_cnt + tmp->left->node_cnt + 1;
+ 
+    /* replace y with right[y] */
+    node->left = tmp->right;
+    if (tmp->right != tree->sentinel)
+    {
+        tmp->right->parent = node;
+    }
+ 
+    /* replace x with y */
+    rbtree_replace(tree, node, tmp);
+    tmp->right = node;
+}
+ 
+/* static methods */
+/* fix the red-black tree after the new node inserted */
+static void rbtree_insert_fixup(rbtree_t* tree, rbtree_node_t* node)
+{
+    while(rbtree_is_red(node->parent))
+    {
+        if (node->parent == node->parent->parent->left)
+        {
+            /* case 1: node's uncle is red */
+            if (rbtree_is_red(node->parent->parent->right))
+            {
+                rbtree_black(node->parent);
+                rbtree_black(node->parent->parent->right);
+                rbtree_red(node->parent->parent);
+                node = node->parent->parent;
+                /* Then we can consider the whole subtree */
+                /* which is represented by the new "node" as the "node" before */
+                /* and keep looping till "node" become the root. */
+            }
+            /* case 2: node's uncle is black */
+            else
+            {
+                /* ensure node is the left kid of its parent */
+                if (node == node->parent->right)
+                {
+                    node = node->parent;
+                    rbtree_left_rotate(tree, node);
+                }
+                /* case 2 -> case 1 */
+                rbtree_black(node->parent);
+                rbtree_red(node->parent->parent);
+                rbtree_right_rotate(tree, node->parent->parent);
+            }
+        }
+        /* same as the "if" clause before with "left" and "right" exchanged */
+        else
+        {
+            if (rbtree_is_red(node->parent->parent->left))
+            {
+                rbtree_black(node->parent);
+                rbtree_black(node->parent->parent->left);
+                rbtree_red(node->parent->parent);
+                node = node->parent->parent;
+            }
+            else
+            {
+                if (node == node->parent->left)
+                {
+                    node = node->parent;
+                    rbtree_right_rotate(tree, node);
+                }
+                rbtree_black(node->parent);
+                rbtree_red(node->parent->parent);
+                rbtree_left_rotate(tree, node->parent->parent);
+            }
+        }
+    }
+    /* ensure the root node being black */
+    rbtree_black(tree->root);
+}
+ 
+static void rbtree_delete_fixup(rbtree_t* tree, rbtree_node_t* node)
+{
+    rbtree_node_t* brother = NULL;
+ 
+    while(node != tree->root && rbtree_is_black(node))
+    {
+        if (node == node->parent->left)
+        {
+            brother = node->parent->right;
+            if (rbtree_is_red(brother))
+            {
+                rbtree_black(brother);
+                rbtree_red(node->parent);
+                rbtree_left_rotate(tree, node->parent);
+                /* update brother after topologic change of the tree */
+                brother = node->parent->right;
+            }
+ 
+            if (rbtree_is_black(brother->left) && rbtree_is_black(brother->right))
+            {
+                rbtree_red(brother);
+                /* go upward and keep on fixing color */
+                node = node->parent;
+            }
+            else
+            {
+                if (rbtree_is_black(brother->right))
+                {
+                    rbtree_black(brother->left);
+                    rbtree_red(brother);
+                    rbtree_right_rotate(tree, brother);
+                    /* update brother after topologic change of the tree */
+                    brother = node->parent->right;
+                }
+                rbtree_copy_color(brother, node->parent);
+                rbtree_black(node->parent);
+                rbtree_black(brother->right);
+                rbtree_left_rotate(tree, node->parent);
+                /* end the loop and ensure root is black */
+                node = tree->root;
+            }
+        }
+        /* same as the "if" clause before with "left" and "right" exchanged */
+        else
+        {
+            brother = node->parent->left;
+            if (rbtree_is_red(brother))
+            {
+                rbtree_black(brother);
+                rbtree_red(node->parent);
+                rbtree_left_rotate(tree, node->parent);
+                brother = node->parent->left;
+            }
+ 
+            if (rbtree_is_black(brother->left) && rbtree_is_black(brother->right))
+            {
+                rbtree_red(brother);
+                node = node->parent;
+            }
+            else
+            {
+                if (rbtree_is_black(brother->left))
+                {
+                    rbtree_black(brother->right);
+                    rbtree_red(brother);
+                    rbtree_right_rotate(tree, brother);
+                    brother = node->parent->left;
+                }
+                rbtree_copy_color(brother, node->parent);
+                rbtree_black(node->parent);
+                rbtree_black(brother->left);
+                rbtree_left_rotate(tree, node->parent);
+                node = tree->root;
+            }
+        }
+    }
+ 
+    rbtree_black(node);
+}
+ 
+/* public methods */
+void rbtree_insert_value(rbtree_t* tree, rbtree_node_t* node)
+{
+    /* Using ** to know wether the new node will be a left kid */
+    /* or a right kid of its parent node. */
+    rbtree_node_t** tmp = &tree->root;
+    rbtree_node_t* parent;
+ 
+    while(*tmp != tree->sentinel)
+    {
+        parent = *tmp;
+ 
+        /* update node_cnt */
+        (parent->node_cnt)++;
+ 
+        tmp = (node->key < parent->key) ? &parent->left : &parent->right;
+    }
+ 
+    /* The pointer knows wether the node should be on the left side */
+    /* or on the right one. */
+    *tmp = node;
+    node->parent = parent;
+    node->left = tree->sentinel;
+    node->right = tree->sentinel;
+    rbtree_red(node);
+}
+ 
+void rbtree_visit(rbtree_node_t* node)
+{
+    /* visiting the current node */
+}
+ 
+void rbtree_insert(rbtree_t* tree, rbtree_node_t* node)
+{
+    rbtree_node_t* sentinel = tree->sentinel;
+ 
+    /* if the tree is empty */
+    if (tree->root == sentinel)
+    {
+        tree->root = node;
+        node->parent = sentinel;
+        node->left = sentinel;
+        node->right = sentinel;
+        rbtree_black(node);
+ 
+        return;
+    }
+ 
+    /* generally */
+    tree->insert(tree, node);
+    rbtree_insert_fixup(tree, node);
+}
+ 
+void rbtree_delete(rbtree_t* tree, rbtree_node_t* node)
+{
+    rbtree_node_t* sentinel = tree->sentinel;
+    /* wether "node" is on the left side or the right one */
+    rbtree_node_t** ptr_to_node = NULL;
+    /* "cover" is the node which is going to cover "node" */
+    rbtree_node_t* cover = NULL;
+    /* wether we lossing a red node on the edge of the tree */
+    int loss_red = rbtree_is_red(node);
+    int is_root = (node == tree->root);
+ 
+    /* get "cover" & "loss_red"  */
+    /* sentinel in "node"'s kids */
+    if (node->left == sentinel)
+    {
+        cover = node->right;
+    }
+    else if (node->right == sentinel)
+    {
+        cover = node->left;
+    }
+    /* "node"'s kids are both non-sentinel */
+    else
+    {
+        /* update "node" & "loss_red" & "is_root" & "cover" */
+        cover = rbtree_subtree_min(node->right, sentinel);
+        node->key = cover->key;
+        node->value = cover->value;
+        node = cover;
+        loss_red = rbtree_is_red(node);
+        is_root = 0;
+        /* move "cover"'s kids */
+        /* "cover" can only be a left kid */
+        /* and can only have a right non-sentinel kid */
+        /* because of function "rbtree_subtree_min" */
+        cover = node->right;
+    }
+ 
+    if (is_root)
+    {
+        /* update root */
+        tree->root = cover;
+    }
+    else
+    {
+        /* downward link */
+        if (node == node->parent->left)
+        {
+            node->parent->left = cover;
+        }
+        else
+        {
+            node->parent->right = cover;
+        }
+    }
+    /* upward link */
+    cover->parent = node->parent;
+    /* "cover" may be a sentinel */
+    if (cover != sentinel)
+    {
+        /* set "cover" */
+        cover->left = node->left;
+        cover->right = node->right;
+        rbtree_copy_color(cover, node);
+    }
+ 
+    /* clear "node" since it's useless */
+    node->key = -1;
+    node->parent = NULL;
+    node->left = NULL;
+    node->right = NULL;
+    node->value = NULL;
+ 
+    /* update node_cnt */
+    rbtree_node_t* tmp = cover->parent;
+    while(tmp != sentinel)
+    {
+        (tmp->node_cnt)--;
+        tmp = tmp->parent;
+    }
+ 
+    if (loss_red)
+    {
+        return;
+    }
+ 
+    /* When lossing a black node on edge */
+    /* the fifth rule of red-black tree will be broke. */
+    /* So the tree need to be fixed. */
+    rbtree_delete_fixup(tree, cover);
+}
+ 
+/* find the node in the tree corresponding to the given key value */
+rbtree_node_t* rbtree_find(rbtree_t* tree, rbtree_key_t key)
+{
+    rbtree_node_t* tmp = tree->root;
+    /* next line is just fot test */
+    // int step_cnt = 0;
+ 
+    /* search the binary tree */
+    while(tmp != tree->sentinel)
+    {
+        /* next line is just fot test */
+        // step_cnt++;
+        if(key == tmp->key)
+        {
+            /* next line is just for test */
+            // printf("step count: %d, color: %s, ", step_cnt, rbtree_is_red(tmp) ? "red" : "black");
+            return tmp;
+        }
+ 
+        tmp = (key < tmp->key) ? tmp->left : tmp->right;
+    }
+ 
+    return NULL;
+}
+ 
+/* find the node in the tree corresponding to the given order number */
+rbtree_node_t* rbtree_index(rbtree_t* tree, int index)
+{
+    if (index < 0 || index >= rbtree_count(tree))
+    {
+        return NULL;
+    }
+ 
+    rbtree_node_t* tmp = tree->root;
+    int left_cnt = 0;
+    int sub_left_cnt;
+ 
+    while(tmp->node_cnt > 0)
+    {
+        sub_left_cnt = tmp->left->node_cnt;
+        if (left_cnt + sub_left_cnt == index)
+        {
+            return tmp;
+        }
+ 
+        if (left_cnt + sub_left_cnt < index)
+        {
+            left_cnt += sub_left_cnt + 1;
+            tmp = tmp->right;
+        }
+        else
+        {
+            tmp = tmp->left;
+        }
+    }
+}
+ 
+/* get the height of the subtree */
+int rbtree_height(rbtree_t* tree, rbtree_node_t* node)
+{
+    if (node == tree->sentinel)
+    {
+        return 0;
+    }
+ 
+    int left_height = rbtree_height(tree, node->left);
+    int right_height = rbtree_height(tree, node->right);
+    int sub_height = (left_height > right_height) ? left_height : right_height;
+    return sub_height+1;
+}
+ 
+/* get the count of nodes in the tree */
+int rbtree_count(rbtree_t* tree)
+{
+    return tree->root->node_cnt;
+}
+ 
+/* visit every node of the subtree whose root is given in order */
+void rbtree_traversal(rbtree_t* tree, rbtree_node_t* node, rbtree_visit_p visit)
+{
+    if (node != tree->sentinel)
+    {
+        rbtree_traversal(tree, node->left, visit);
+        visit(node);
+        rbtree_traversal(tree, node->right, visit);
+    }
+}
